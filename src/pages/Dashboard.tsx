@@ -65,7 +65,7 @@ const Dashboard = () => {
         <h2 className="text-2xl font-semibold mb-4">Your Statistics</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="bg-gray-100 p-4 rounded-lg shadow">
-            <h3 className="text-lg font-medium text-gray-700">Total Meals</h3>
+            <h3 className="text-lg font-medium text-gray-700">Total Meals Created</h3>
             <p className="text-2xl font-bold text-green-800">{mealCount.toFixed(0)}</p>
           </div>
           <div className="bg-gray-100 p-4 rounded-lg shadow">
