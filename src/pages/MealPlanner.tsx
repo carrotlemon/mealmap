@@ -286,7 +286,7 @@ const MealPlanner = () => {
   // };
 
   const filteredIngredients = fridgeIngredients.filter((ingredient) =>
-    ingredient.name.toLowerCase().includes(searchTerm.toLowerCase())
+    ((ingredient.name??"").toLowerCase()).includes((searchTerm??"").toLowerCase())
   );
 
   return (
@@ -579,9 +579,9 @@ const MealPlanner = () => {
     onClick={async () => {
       if (!newIngredientName || newIngredientAmount <= 0) return;
 
-      const inputName = newIngredientName.trim().toLowerCase();
+      const inputName = (newIngredientName.trim()??"").toLowerCase();
       const existing = fridgeIngredients.find(
-        (item) => item.name?.toLowerCase() === inputName
+        (item) => (item.name??"").toLowerCase() === inputName
       );
 
       const mergedAmount = existing
@@ -596,7 +596,7 @@ const MealPlanner = () => {
 
       const updatedFridge = existing
         ? fridgeIngredients.map((item) =>
-            item.name?.toLowerCase() === inputName
+            (item.name??"").toLowerCase() === inputName
               ? { ...item, amount: mergedAmount }
               : item
           )
@@ -612,13 +612,13 @@ const MealPlanner = () => {
 
       // Sync with shopping list
       const matched = shoppingList.find(
-        (item) => item.ingredient.toLowerCase() === inputName
+        (item) => (item.ingredient??"").toLowerCase() === inputName
       );
       if (matched) {
         matched.amount = Math.max(matched.amount - newIngredientAmount, 0);
         setShoppingList((prev) =>
           prev.map((item) =>
-            item.ingredient.toLowerCase() === inputName
+            (item.ingredient??"").toLowerCase() === inputName
               ? { ...item, amount: matched.amount }
               : item
           )
