@@ -33,6 +33,9 @@ const MealPlanner = () => {
   const [meals, setMeals] = useState<Meal[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [newIngredientName, setNewIngredientName] = useState("");
+  const [newIngredientAmount, setNewIngredientAmount] = useState<number>(0);
+  const [newIngredientUnit, setNewIngredientUnit] = useState("g");
   const [shoppingList, setShoppingList] = useState<
     {
       ingredient: string;
@@ -55,7 +58,7 @@ const MealPlanner = () => {
       setSortAsc((prev) => !prev); // toggle direction
     } else {
       setSortBy(column); // switch column
-      setSortAsc(true);  // default to ascending
+      setSortAsc(true); // default to ascending
     }
   };
 
@@ -266,24 +269,24 @@ const MealPlanner = () => {
     fetchFridgeIngredients();
   }, [currentUser]);
 
-  const addIngredientToFridge = async (ingredient: {
-    name: string;
-    amount: number;
-    unit: string;
-  }) => {
-    if (!currentUser) return;
+  // const addIngredientToFridge = async (ingredient: {
+  //   name: string;
+  //   amount: number;
+  //   unit: string;
+  // }) => {
+  //   if (!currentUser) return;
 
-    try {
-      const fridgeRef = collection(db, "users", currentUser.uid, "fridge");
-      await setDoc(doc(fridgeRef, ingredient.name), ingredient);
-      setFridgeIngredients((prev) => [...prev, ingredient]);
-    } catch (error) {
-      console.error("Error adding ingredient to fridge:", error);
-    }
-  };
+  //   try {
+  //     const fridgeRef = collection(db, "users", currentUser.uid, "fridge");
+  //     await setDoc(doc(fridgeRef, ingredient.name), ingredient);
+  //     setFridgeIngredients((prev) => [...prev, ingredient]);
+  //   } catch (error) {
+  //     console.error("Error adding ingredient to fridge:", error);
+  //   }
+  // };
 
   const filteredIngredients = fridgeIngredients.filter((ingredient) =>
-    ingredient.name.toLowerCase().includes(searchTerm.toLowerCase())
+    ingredient.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -478,27 +481,159 @@ const MealPlanner = () => {
           className="w-full px-4 py-2 mb-4 border rounded"
         />
         <ul className="space-y-2">
-          {filteredIngredients.map(({ name, amount, unit }) => (
-            <li key={name} className="flex justify-between">
-              <span>{name}</span>
-              <span>
-                {amount} {unit}
-              </span>
-            </li>
-          ))}
-        </ul>
+  {filteredIngredients.map(({ name, amount, unit }) => (
+    <li key={name} className="flex justify-between items-center">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-medium">{amount} {unit}</span>
+        <span>{name}</span>
+      </div>
+      <div className="flex gap-2">
         <button
-          onClick={() =>
-            addIngredientToFridge({
-              name: "New Ingredient",
-              amount: 1,
-              unit: "kg",
-            })
-          }
-          className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          onClick={async () => {
+            const delta = prompt(`Enter amount of ${unit} to add/remove (e.g. 50 or -25):`);
+            const change = Number(delta);
+            if (!isNaN(change) && change !== 0) {
+              const newAmount = Math.max(amount + change, 0);
+              const updated = fridgeIngredients
+                .map((item) =>
+                  item.name === name ? { ...item, amount: newAmount } : item
+                )
+                .filter((item) => item.amount > 0);
+
+              setFridgeIngredients(updated);
+
+              if (currentUser) {
+                const fridgeRef = doc(db, "users", currentUser.uid, "fridge", name);
+                if (newAmount === 0) {
+                  await setDoc(fridgeRef, {}); // or deleteDoc if used
+                } else {
+                  await setDoc(fridgeRef, { name, amount: newAmount, unit });
+                }
+              }
+            }
+          }}
+          className="text-blue-500 hover:text-blue-700 font-bold"
         >
-          Add Ingredient
+          ✏️
         </button>
+        <button
+          onClick={async () => {
+            const remove = prompt(`How much ${unit} of ${name} to remove?`);
+            const toRemove = Number(remove);
+            if (!isNaN(toRemove) && toRemove > 0) {
+              const newAmount = Math.max(amount - toRemove, 0);
+              const updated = fridgeIngredients
+                .map((item) =>
+                  item.name === name ? { ...item, amount: newAmount } : item
+                )
+                .filter((item) => item.amount > 0);
+
+              setFridgeIngredients(updated);
+
+              if (currentUser) {
+                const fridgeRef = doc(db, "users", currentUser.uid, "fridge", name);
+                if (newAmount === 0) {
+                  await setDoc(fridgeRef, {});
+                } else {
+                  await setDoc(fridgeRef, { name, amount: newAmount, unit });
+                }
+              }
+            }
+          }}
+          className="text-red-500 hover:text-red-700 font-bold"
+        >
+          ✕
+        </button>
+      </div>
+    </li>
+  ))}
+</ul>
+        <div className="mt-4 space-y-2">
+  <input
+    type="text"
+    placeholder="Ingredient name"
+    value={newIngredientName}
+    onChange={(e) => setNewIngredientName(e.target.value)}
+    className="w-full border px-3 py-2 rounded"
+  />
+  <div className="flex gap-2">
+    <input
+      type="number"
+      placeholder="Quantity"
+      min={0}
+      value={newIngredientAmount}
+      onChange={(e) => setNewIngredientAmount(Number(e.target.value))}
+      className="w-1/2 border px-3 py-2 rounded"
+    />
+    <select
+      value={newIngredientUnit}
+      onChange={(e) => setNewIngredientUnit(e.target.value)}
+      className="w-1/2 border px-3 py-2 rounded"
+    >
+      <option value="count">count</option>
+      <option value="g">g</option>
+      <option value="ml">ml</option>
+    </select>
+  </div>
+  <button
+    onClick={async () => {
+      if (!newIngredientName || newIngredientAmount <= 0) return;
+
+      const inputName = newIngredientName.trim().toLowerCase();
+      const existing = fridgeIngredients.find(
+        (item) => item.name?.toLowerCase() === inputName
+      );
+
+      const mergedAmount = existing
+        ? existing.amount + newIngredientAmount
+        : newIngredientAmount;
+
+      const mergedIngredient = {
+        name: existing?.name || newIngredientName.trim(),
+        amount: mergedAmount,
+        unit: newIngredientUnit,
+      };
+
+      const updatedFridge = existing
+        ? fridgeIngredients.map((item) =>
+            item.name?.toLowerCase() === inputName
+              ? { ...item, amount: mergedAmount }
+              : item
+          )
+        : [...fridgeIngredients, mergedIngredient];
+
+      setFridgeIngredients(updatedFridge);
+
+      // Write to Firestore
+      if (currentUser) {
+        const fridgeRef = doc(db, "users", currentUser.uid, "fridge", mergedIngredient.name);
+        await setDoc(fridgeRef, mergedIngredient);
+      }
+
+      // Sync with shopping list
+      const matched = shoppingList.find(
+        (item) => item.ingredient.toLowerCase() === inputName
+      );
+      if (matched) {
+        matched.amount = Math.max(matched.amount - newIngredientAmount, 0);
+        setShoppingList((prev) =>
+          prev.map((item) =>
+            item.ingredient.toLowerCase() === inputName
+              ? { ...item, amount: matched.amount }
+              : item
+          )
+        );
+      }
+
+      setNewIngredientName("");
+      setNewIngredientAmount(0);
+      setNewIngredientUnit("g");
+    }}
+    className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+  >
+    Add Ingredient
+  </button>
+</div>
       </div>
 
       {isModalOpen && (
