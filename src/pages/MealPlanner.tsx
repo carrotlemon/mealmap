@@ -1,0 +1,382 @@
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { useAuth } from '../contexts/AuthContext';
+import { addDays, startOfWeek, format } from 'date-fns';
+
+interface Meal {
+  id: string;
+  name: string;
+  macros: { calories: number; protein: number; carbs: number; fat: number };
+  ingredients: { name: string; amount: number; unit: string; fridgeLifetime: number }[]; // Added fridgeLifetime
+}
+
+const MealPlanner = () => {
+  const { currentUser } = useAuth();
+  const [currentWeek, setCurrentWeek] = useState<Date>(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const [mealsByDay, setMealsByDay] = useState<{ [key: string]: Meal[] }>({});
+  const [meals, setMeals] = useState<Meal[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [shoppingList, setShoppingList] = useState<{ ingredient: string; amount: number; unit: string; fridgeLifetime: number }[]>([]);
+  const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const datesOfWeek = daysOfWeek.map((_, index) =>
+    format(addDays(currentWeek, index), 'MMM dd')
+  );
+
+  // Fetch meals from Firestore
+  useEffect(() => {
+    const fetchMeals = async () => {
+      if (!currentUser) return;
+
+      try {
+        const mealsRef = collection(db, 'users', currentUser.uid, 'meals');
+        const mealsSnapshot = await getDocs(mealsRef);
+
+        const fetchedMeals: Meal[] = mealsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as Meal[];
+
+        setMeals(fetchedMeals);
+      } catch (error) {
+        console.error('Error fetching meals:', error);
+      }
+    };
+
+    fetchMeals();
+  }, [currentUser]);
+
+  // Fetch meal plan for the current week
+  useEffect(() => {
+    const fetchMealPlan = async () => {
+      if (!currentUser) return;
+
+      try {
+        const weekKey = format(currentWeek, 'yyyy-MM-dd');
+        const mealPlanRef = doc(db, 'users', currentUser.uid, 'mealPlans', weekKey);
+        const mealPlanSnapshot = await getDoc(mealPlanRef);
+
+        if (mealPlanSnapshot.exists()) {
+          setMealsByDay(mealPlanSnapshot.data() as { [key: string]: Meal[] });
+        } else {
+          setMealsByDay({
+            Mon: [],
+            Tue: [],
+            Wed: [],
+            Thu: [],
+            Fri: [],
+            Sat: [],
+            Sun: [],
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching meal plan:', error);
+      }
+    };
+
+    fetchMealPlan();
+  }, [currentUser, currentWeek]);
+
+  // Update shopping list whenever mealsByDay changes
+  useEffect(() => {
+    const generateShoppingList = () => {
+      const allIngredients: {
+        [key: string]: { amount: number; unit: string; fridgeLifetime: number };
+      } = {};
+  
+      Object.values(mealsByDay).forEach((dayMeals) => {
+        dayMeals.forEach((meal) => {
+          meal.ingredients.forEach(({ name, amount, unit, fridgeLifetime }) => {
+            if (!allIngredients[name]) {
+              allIngredients[name] = { amount: 0, unit, fridgeLifetime };
+            }
+            allIngredients[name].amount += amount;
+            allIngredients[name].fridgeLifetime = Math.min(
+              allIngredients[name].fridgeLifetime,
+              fridgeLifetime
+            ); // Take the minimum fridge lifetime
+          });
+        });
+      });
+  
+      return Object.entries(allIngredients).map(
+        ([ingredient, { amount, unit, fridgeLifetime }]) => ({
+          ingredient,
+          amount,
+          unit,
+          fridgeLifetime,
+        })
+      );
+    };
+  
+    setShoppingList(generateShoppingList());
+  }, [mealsByDay]);
+
+  const saveMealPlan = async (updatedMealsByDay: { [key: string]: Meal[] }) => {
+    if (!currentUser) return;
+
+    try {
+      const weekKey = format(currentWeek, 'yyyy-MM-dd');
+      const mealPlanRef = doc(db, 'users', currentUser.uid, 'mealPlans', weekKey);
+      await setDoc(mealPlanRef, updatedMealsByDay);
+      console.log('Meal plan auto-saved successfully!');
+    } catch (error) {
+      console.error('Error saving meal plan:', error);
+    }
+  };
+
+  const addMealToDay = (meal: Meal) => {
+    if (selectedDay) {
+      setMealsByDay((prev) => {
+        const updatedMealsByDay = {
+          ...prev,
+          [selectedDay]: [...(prev[selectedDay] || []), meal],
+        };
+        saveMealPlan(updatedMealsByDay);
+        return updatedMealsByDay;
+      });
+      setIsModalOpen(false);
+    }
+  };
+
+  const removeMealFromDay = (day: string, mealId: string) => {
+    setMealsByDay((prev) => {
+      const updatedMealsByDay = {
+        ...prev,
+        [day]: prev[day].filter((meal) => meal.id !== mealId),
+      };
+      saveMealPlan(updatedMealsByDay);
+      return updatedMealsByDay;
+    });
+  };
+
+  const handleWeekChange = (direction: 'prev' | 'next') => {
+    setCurrentWeek((prev) =>
+      direction === 'prev' ? addDays(prev, -7) : addDays(prev, 7)
+    );
+  };
+
+  const [fridgeIngredients, setFridgeIngredients] = useState<
+    { name: string; amount: number; unit: string }[]
+  >([]);
+  const [searchTerm, setSearchTerm] = useState<string>("");
+
+  // Fetch fridge ingredients from Firestore
+  useEffect(() => {
+    const fetchFridgeIngredients = async () => {
+      if (!currentUser) return;
+
+      try {
+        const fridgeRef = collection(db, "users", currentUser.uid, "fridge");
+        const fridgeSnapshot = await getDocs(fridgeRef);
+
+        const fetchedIngredients = fridgeSnapshot.docs.map((doc) => {
+          const data = doc.data() as { name: string; amount: number; unit: string };
+          return {
+            id: doc.id,
+            ...data,
+          };
+        });
+
+        setFridgeIngredients(fetchedIngredients);
+      } catch (error) {
+        console.error("Error fetching fridge ingredients:", error);
+      }
+    };
+
+    fetchFridgeIngredients();
+  }, [currentUser]);
+
+  const addIngredientToFridge = async (ingredient: {
+    name: string;
+    amount: number;
+    unit: string;
+  }) => {
+    if (!currentUser) return;
+
+    try {
+      const fridgeRef = collection(db, "users", currentUser.uid, "fridge");
+      await setDoc(doc(fridgeRef, ingredient.name), ingredient);
+      setFridgeIngredients((prev) => [...prev, ingredient]);
+    } catch (error) {
+      console.error("Error adding ingredient to fridge:", error);
+    }
+  };
+
+  const filteredIngredients = fridgeIngredients.filter((ingredient) =>
+    ingredient.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="container mx-auto px-4 py-8">
+      <div className="flex justify-between items-center mb-4">
+        <button
+          onClick={() => handleWeekChange('prev')}
+          className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
+          &lt;--
+        </button>
+        <h2 className="text-xl font-semibold">
+          Week of {format(currentWeek, 'MMM dd, yyyy')}
+        </h2>
+        <button
+          onClick={() => handleWeekChange('next')}
+          className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
+          --&gt;
+        </button>
+      </div>
+
+      {/*  */}
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="grid grid-cols-7 gap-4">
+          {daysOfWeek.map((day, index) => {
+            const dayMeals = mealsByDay[day] || [];
+            const totalMacros = dayMeals.reduce(
+              (totals, meal) => {
+                totals.calories += meal.macros.calories;
+                totals.protein += meal.macros.protein;
+                totals.carbs += meal.macros.carbs;
+                totals.fat += meal.macros.fat;
+                return totals;
+              },
+              { calories: 0, protein: 0, carbs: 0, fat: 0 }
+            );
+
+            return (
+              <div key={day} className="border rounded-lg p-4">
+                {/* Day of the Week */}
+                <h3 className="font-semibold mb-2">
+                  {day} - {datesOfWeek[index]}
+                </h3>
+                {/* Total Macros for the day */}
+                <div className="mt-4 text-sm text-gray-700">
+                  <p><strong>Total Macros:</strong></p>
+                  <p>Calories: {totalMacros.calories.toFixed(0)} kcal</p>
+                  <p>Protein: {totalMacros.protein.toFixed(0)}g</p>
+                  <p>Carbs: {totalMacros.carbs.toFixed(0)}g</p>
+                  <p>Fat: {totalMacros.fat.toFixed(0)}g</p>
+                </div>
+                {/* Add Meal Button */}
+                <div
+                    className="bg-gray-50 p-2 rounded cursor-pointer hover:bg-gray-100"
+                    onClick={() => {
+                      setSelectedDay(day);
+                      setIsModalOpen(true);
+                    }}>
+                    + Add Meal
+                </div>
+                {/* List of meals for the day */}
+                <div className="space-y-2">
+                  {dayMeals.map((meal) => (
+                    <div key={meal.id} className="bg-gray-50 p-2 rounded relative group">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h4 className="font-medium">{meal.name}</h4>
+                          <p className="text-sm text-gray-600">
+                            {meal.macros.calories.toFixed(0)} kcal, {meal.macros.protein.toFixed(0)}g protein, {meal.macros.carbs.toFixed(0)}g carbs, {meal.macros.fat.toFixed(0)}g fat
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => removeMealFromDay(day, meal.id)}
+                          className="absolute top-1 right-1 text-red-600 hover:text-red-800 hidden group-hover:block">
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  
+                </div>
+                
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+    <div className="bg-white rounded-lg shadow-md p-6 mt-6">
+      <h2 className="text-xl font-semibold mb-4">Shopping List</h2>
+      <ul className="space-y-2">
+        {shoppingList.map(({ ingredient, amount, unit, fridgeLifetime }) => (
+          <li
+          key={ingredient}
+          className={`flex justify-between ${
+            fridgeLifetime < 3 ? 'text-red-500' : ''
+          }`}>
+            <span>
+              {ingredient}
+            </span>
+            <span>
+              {amount} {unit}, Lasts {fridgeLifetime} days
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+    
+    <div className="bg-white rounded-lg shadow-md p-6 mt-6">
+      <h2 className="text-xl font-semibold mb-4">My Fridge</h2>
+      <input
+        type="text"
+        placeholder="Search ingredients..."
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        className="w-full px-4 py-2 mb-4 border rounded"
+      />
+      <ul className="space-y-2">
+        {filteredIngredients.map(({ name, amount, unit }) => (
+          <li key={name} className="flex justify-between">
+            <span>{name}</span>
+            <span>
+              {amount} {unit}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <button
+        onClick={() =>
+          addIngredientToFridge({ name: "New Ingredient", amount: 1, unit: "kg" })
+        }
+        className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+      >
+        Add Ingredient
+      </button>
+    </div>
+
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-96">
+            <h2 className="text-xl font-semibold mb-4">Select a Meal</h2>
+            <div className="space-y-4">
+              {meals.map((meal) => (
+                <div
+                  key={meal.id}
+                  className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                  onClick={() => addMealToDay(meal)}
+                >
+                  <h3 className="font-medium">{meal.name}</h3>
+                  <p className="text-sm text-gray-600">
+                    {meal.macros.calories.toFixed(0)} kcal, {meal.macros.protein.toFixed(0)}g protein, {meal.macros.carbs.toFixed(0)}g carbs, {meal.macros.fat.toFixed(0)}g fat
+                  </p>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setIsModalOpen(false)}
+              className="mt-4 w-full px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+        
+      )}
+    </motion.div>
+  );
+};
+
+export default MealPlanner;
