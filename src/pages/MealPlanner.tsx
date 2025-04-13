@@ -4,6 +4,7 @@ import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { addDays, startOfWeek, format } from 'date-fns';
+import { v4 as uuidv4 } from 'uuid';
 
 interface Meal {
   id: string;
@@ -12,10 +13,14 @@ interface Meal {
   ingredients: { name: string; amount: number; unit: string; fridgeLifetime: number }[]; // Added fridgeLifetime
 }
 
+interface PlannedMeal extends Meal {
+  instanceId: string;
+}
+
 const MealPlanner = () => {
   const { currentUser } = useAuth();
   const [currentWeek, setCurrentWeek] = useState<Date>(startOfWeek(new Date(), { weekStartsOn: 1 }));
-  const [mealsByDay, setMealsByDay] = useState<{ [key: string]: Meal[] }>({});
+  const [mealsByDay, setMealsByDay] = useState<{ [key: string]: PlannedMeal[] }>({});
   const [meals, setMeals] = useState<Meal[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
@@ -59,7 +64,7 @@ const MealPlanner = () => {
         const mealPlanSnapshot = await getDoc(mealPlanRef);
 
         if (mealPlanSnapshot.exists()) {
-          setMealsByDay(mealPlanSnapshot.data() as { [key: string]: Meal[] });
+          setMealsByDay(mealPlanSnapshot.data() as { [key: string]: PlannedMeal[] });
         } else {
           setMealsByDay({
             Mon: [],
@@ -129,10 +134,15 @@ const MealPlanner = () => {
 
   const addMealToDay = (meal: Meal) => {
     if (selectedDay) {
+      const mealWithInstance: PlannedMeal = {
+        ...meal,
+        instanceId: uuidv4(),
+      };
+  
       setMealsByDay((prev) => {
         const updatedMealsByDay = {
           ...prev,
-          [selectedDay]: [...(prev[selectedDay] || []), meal],
+          [selectedDay]: [...(prev[selectedDay] || []), mealWithInstance],
         };
         saveMealPlan(updatedMealsByDay);
         return updatedMealsByDay;
@@ -141,12 +151,18 @@ const MealPlanner = () => {
     }
   };
 
-  const removeMealFromDay = (day: string, mealId: string) => {
+  const removeMealFromDay = (day: string, instanceId: string) => {
     setMealsByDay((prev) => {
+      const updatedMeals = [...prev[day]];
+      const index = updatedMeals.findIndex(meal => meal.instanceId === instanceId);
+  
+      if (index !== -1) updatedMeals.splice(index, 1);
+  
       const updatedMealsByDay = {
         ...prev,
-        [day]: prev[day].filter((meal) => meal.id !== mealId),
+        [day]: updatedMeals,
       };
+  
       saveMealPlan(updatedMealsByDay);
       return updatedMealsByDay;
     });
@@ -219,7 +235,7 @@ const MealPlanner = () => {
         <button
           onClick={() => handleWeekChange('prev')}
           className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
-          &lt;--
+          <b>&#10229;</b>
         </button>
         <h2 className="text-xl font-semibold">
           Week of {format(currentWeek, 'MMM dd, yyyy')}
@@ -227,7 +243,7 @@ const MealPlanner = () => {
         <button
           onClick={() => handleWeekChange('next')}
           className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
-          --&gt;
+          <b>&#10230;</b>
         </button>
       </div>
 
@@ -273,8 +289,8 @@ const MealPlanner = () => {
                 {/* List of meals for the day */}
                 <div className="space-y-2">
                   {dayMeals.map((meal) => (
-                    <div key={meal.id} className="bg-gray-50 p-2 rounded relative group">
-                      <div className="flex justify-between items-center">
+                    <div key={meal.instanceId} className="bg-gray-50 p-2 rounded relative group">
+                    <div className="flex justify-between items-center">
                         <div>
                           <h4 className="font-medium">{meal.name}</h4>
                           <p className="text-sm text-gray-600">
@@ -282,7 +298,7 @@ const MealPlanner = () => {
                           </p>
                         </div>
                         <button
-                          onClick={() => removeMealFromDay(day, meal.id)}
+                          onClick={() => removeMealFromDay(day, meal.instanceId)}
                           className="absolute top-1 right-1 text-red-600 hover:text-red-800 hidden group-hover:block">
                           ✕
                         </button>
