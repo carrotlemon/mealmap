@@ -286,7 +286,7 @@ const MealPlanner = () => {
   // };
 
   const filteredIngredients = fridgeIngredients.filter((ingredient) =>
-    ingredient.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    ingredient.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
